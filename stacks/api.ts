@@ -1,13 +1,19 @@
-import { StackContext, Api } from "sst/constructs";
+import { StackContext, Function } from "sst/constructs";
 
 export function API({ stack }: StackContext) {
-  const api = new Api(stack, "api", {
-    routes: {
-      "GET /": "packages/functions/src/lambda.handler"
-    },
-  });
+  stack.setDefaultFunctionProps({
+    memorySize: '1 GB',
+    runtime: 'nodejs18.x',
+    architecture: 'arm_64',
+    timeout: '15 minutes'
+  })
 
-  stack.addOutputs({
-    ApiEndpoint: api.url,
-  });
+  const fun = new Function(stack, 'fn', {
+    handler: 'packages/functions/src/lambda.handler',
+    url: { cors: true, authorizer: 'none' }
+  })
+
+  fun.attachPermissions(['s3:Read'])
+
+  stack.addOutputs({ url: fun.url })
 }

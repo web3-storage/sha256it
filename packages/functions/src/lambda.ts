@@ -8,12 +8,21 @@ import { sha256 } from 'multiformats/hashes/sha2'
 const CAR_CODEC = 0x0202
 
 export const handler = ApiHandler(async event => {
-  const key = new URL(`http://localhost/?${event.rawQueryString}`).searchParams.get('key')
+  const { searchParams } = new URL(`http://localhost/?${event.rawQueryString}`)
+
+  const region = searchParams.get('region')
+  if (!region) return { statusCode: 400, body: 'Missing "region" search parameter' }
+  if (!['us-east-1', 'us-west-2'].includes(region)) return { statusCode: 400, body: 'Invalid region' }
+
+  const bucket = searchParams.get('bucket')
+  if (!bucket) return { statusCode: 400, body: 'Missing "bucket" search parameter' }
+  if (!bucket.startsWith('dotstorage')) return { statusCode: 400, body: 'Invalid bucket' }
+
+  const key = searchParams.get('key')
   if (!key) return { statusCode: 400, body: 'Missing "key" search parameter' }
   if (!key.endsWith('.car')) return { statusCode: 400, body: 'Only keys for CARs supported' }
 
-  const s3 = new S3Client({ region: notNully('REGION', process.env) })
-  const bucket = notNully('BUCKET', process.env)
+  const s3 = new S3Client({ region })
   const cmd = new GetObjectCommand({ Bucket: bucket, Key: key })
 
   const res = await s3.send(cmd)
@@ -28,9 +37,3 @@ export const handler = ApiHandler(async event => {
 
   return { statusCode: 200, body: `{"/":"${cid}"}` }
 })
-
-const notNully = (k: string, obj: Record<string, string|undefined>) => {
-  const v = obj[k]
-  if (!v) throw new Error(`${k} must not be null`)
-  return v
-}
