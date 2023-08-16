@@ -13,7 +13,7 @@ export function API({ stack }: StackContext) {
     url: { cors: true, authorizer: 'none' }
   })
 
-  fun.attachPermissions(['s3:Read'])
+  fun.attachPermissions(['s3:GetObject'])
 
   stack.addOutputs({ url: fun.url })
 }
