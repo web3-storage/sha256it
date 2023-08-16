@@ -7,9 +7,10 @@ import dotenv from 'dotenv'
 import { Parse } from 'ndjson-web'
 import * as dagJSON from '@ipld/dag-json'
 import { Parallel } from 'parallel-transform-web'
+import retry from 'p-retry'
 
 const pkg = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url)).toString())
-const cli = sade(pkg.name)
+const cli = sade('sha256it')
 const concurrency = 10
 
 dotenv.config({ path: './.env.local' })
@@ -73,8 +74,13 @@ cli
         const region = item.region ?? notNully(options, 'region', 'missing required option')
         const bucket = item.bucket ?? notNully(options, 'bucket', 'missing required option')
         const { key } = item
-        const { cid } = await hash(endpoint, region, bucket, key)
-        return { region, bucket, key, cid }
+        try {
+          const { cid } = await retry(() => hash(endpoint, region, bucket, key))
+          return { region, bucket, key, cid }
+        } catch (err) {
+          console.warn(`failed hash of ${region}/${bucket}/${key}`, err)
+          return { region, bucket, key, error: err.message }
+        }
       }))
       .pipeThrough(new TransformStream({
         transform: (item, controller) => controller.enqueue(`${dagJSON.stringify(item)}\n`)
