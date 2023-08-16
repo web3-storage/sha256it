@@ -12,7 +12,7 @@ export const handler = ApiHandler(async event => {
 
   const region = searchParams.get('region')
   if (!region) return errorResponse('Missing "region" search parameter', 400)
-  if (!['us-east-1', 'us-west-2'].includes(region)) return errorResponse('Invalid region', 400)
+  if (!['us-east-2', 'us-west-2'].includes(region)) return errorResponse('Invalid region', 400)
 
   const bucket = searchParams.get('bucket')
   if (!bucket) return errorResponse('Missing "bucket" search parameter', 400)
