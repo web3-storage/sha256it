@@ -11,7 +11,7 @@ import retry from 'p-retry'
 
 const pkg = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url)).toString())
 const cli = sade('sha256it')
-const concurrency = 10
+const concurrency = 25
 
 dotenv.config({ path: './.env.local' })
 
@@ -26,6 +26,7 @@ cli
   .option('-r, --region', 'Bucket region.')
   .option('-b, --bucket', 'Bucket name.')
   .option('-p, --prefix', 'Key prefix.')
+  .option('-s, --start-after', 'Start listing after this key.')
   .action(async (/** @type {Record<string, string|undefined>} */ options) => {
     const accessKeyId = notNully(process.env, 'ACCESS_KEY_ID', 'missing environment variable')
     const secretAccessKey = notNully(process.env, 'SECRET_ACCESS_KEY', 'missing environment variable')
@@ -33,13 +34,14 @@ cli
     const region = notNully(options, 'region', 'missing required option')
     const bucket = notNully(options, 'bucket', 'missing required option')
     const prefix = options.prefix ?? ''
+    const startAfter = options['start-after']
     const s3 = new S3Client({ region, endpoint, credentials: { accessKeyId, secretAccessKey } })
 
     /** @type {string|undefined} */
     let token
     await new ReadableStream({
       async pull (controller) {
-        const cmd = new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: 1000, ContinuationToken: token })
+        const cmd = new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, StartAfter: startAfter, MaxKeys: 1000, ContinuationToken: token })
         const res = await s3.send(cmd)
         for (const obj of res.Contents ?? []) {
           if (!obj.Key || !obj.Key.endsWith('.car')) continue
