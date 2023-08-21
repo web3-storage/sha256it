@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { ApiHandler } from 'sst/node/api'
+import { Config } from 'sst/node/config'
 import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CompletedPart, CreateMultipartUploadCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client, UploadPartCommand } from '@aws-sdk/client-s3'
 import { Readable } from 'node:stream'
 import * as Link from 'multiformats/link'
@@ -89,8 +90,10 @@ export const _handler = async (request: Request, env: Record<string, string|unde
       endpoint: mustGetEnv(env, 'DEST_ENDPOINT'),
       region: mustGetEnv(env, 'DEST_REGION'),
       credentials: {
-        accessKeyId: mustGetEnv(env, 'DEST_ACCESS_KEY_ID'),
-        secretAccessKey: mustGetEnv(env, 'DEST_SECRET_ACCESS_KEY')
+        // @ts-expect-error
+        accessKeyId: Config.DEST_ACCESS_KEY_ID,
+        // @ts-expect-error
+        secretAccessKey: Config.DEST_SECRET_ACCESS_KEY
       }
     }
 
