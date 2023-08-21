@@ -4,6 +4,7 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import * as Link from 'multiformats/link'
 import * as Digest from 'multiformats/hashes/digest'
 import { sha256 } from 'multiformats/hashes/sha2'
+import { errorResponse } from './lib/util'
 
 const CAR_CODEC = 0x0202
 
@@ -36,9 +37,4 @@ export const handler = ApiHandler(async event => {
   const cid = Link.create(CAR_CODEC, digest)
 
   return { statusCode: 200, body: `{"ok":true,"cid":{"/":"${cid}"}}` }
-})
-
-const errorResponse = (message: string, statusCode = 500) => ({
-  statusCode,
-  body: JSON.stringify({ ok: false, error: message })
 })

@@ -1,6 +1,13 @@
-import { StackContext, Function } from "sst/constructs";
+import { StackContext, Function, Config } from 'sst/constructs'
+import { mustGetEnv } from '../packages/functions/src/lib/util'
 
-export function API({ stack }: StackContext) {
+export function API ({ stack }: StackContext) {
+  const DEST_ENDPOINT = mustGetEnv(process.env, 'DEST_ENDPOINT')
+  const DEST_REGION = mustGetEnv(process.env, 'DEST_REGION')
+  const CARPARK_BUCKET = mustGetEnv(process.env, 'CARPARK_BUCKET')
+  const SATNAV_BUCKET = mustGetEnv(process.env, 'SATNAV_BUCKET')
+  const DUDEWHERE_BUCKET = mustGetEnv(process.env, 'DUDEWHERE_BUCKET')
+
   stack.setDefaultFunctionProps({
     memorySize: '1 GB',
     runtime: 'nodejs18.x',
@@ -8,12 +15,33 @@ export function API({ stack }: StackContext) {
     timeout: '15 minutes'
   })
 
-  const fun = new Function(stack, 'fn', {
-    handler: 'packages/functions/src/lambda.handler',
+  const hashFunction = new Function(stack, 'hash', {
+    handler: 'packages/functions/src/hash.handler',
     url: { cors: true, authorizer: 'none' }
   })
 
-  fun.attachPermissions(['s3:GetObject'])
+  hashFunction.attachPermissions(['s3:GetObject'])
 
-  stack.addOutputs({ url: fun.url })
+  const accessKeyID = new Config.Secret(stack, 'DEST_ACCESS_KEY_ID')
+  const secretAccessKey = new Config.Secret(stack, 'DEST_SECRET_ACCESS_KEY')
+
+  const copyFunction = new Function(stack, 'copy', {
+    handler: 'packages/functions/src/copy.handler',
+    url: { cors: true, authorizer: 'none' },
+    environment: {
+      DEST_ENDPOINT,
+      DEST_REGION,
+      CARPARK_BUCKET,
+      SATNAV_BUCKET,
+      DUDEWHERE_BUCKET
+    },
+    bind: [accessKeyID, secretAccessKey]
+  })
+
+  copyFunction.attachPermissions(['s3:GetObject'])
+
+  stack.addOutputs({
+    hashFunctionURL: hashFunction.url,
+    copyFunctionURL: copyFunction.url
+  })
 }
