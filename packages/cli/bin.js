@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import { Readable, Writable } from 'node:stream'
 import sade from 'sade'
-import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { S3Client, ListObjectsV2Command, HeadObjectCommand } from '@aws-sdk/client-s3'
 import dotenv from 'dotenv'
 import { Parse } from 'ndjson-web'
 import * as dagJSON from '@ipld/dag-json'
@@ -29,8 +29,8 @@ cli
   .option('-p, --prefix', 'Key prefix.')
   .option('-s, --start-after', 'Start listing after this key.')
   .action(async (/** @type {Record<string, string|undefined>} */ options) => {
-    const accessKeyId = notNully(process.env, 'ACCESS_KEY_ID', 'missing environment variable')
-    const secretAccessKey = notNully(process.env, 'SECRET_ACCESS_KEY', 'missing environment variable')
+    const accessKeyId = notNully(process.env, 'AWS_ACCESS_KEY_ID', 'missing environment variable')
+    const secretAccessKey = notNully(process.env, 'AWS_SECRET_ACCESS_KEY', 'missing environment variable')
     const { endpoint } = options
     const region = notNully(options, 'region', 'missing required option')
     const bucket = notNully(options, 'bucket', 'missing required option')
@@ -199,6 +199,69 @@ const notNully = (obj, key, msg = 'unexpected null value') => {
   const value = obj[key]
   if (!value) throw new Error(`${msg}: ${key}`)
   return value
+}
+
+cli.command('head [carCid]')
+  .describe('Check head response for a car cid at a bucket endpoint')
+  .example('head bagbaieraaosiqlj4gia2lx35dl7ofqynk7xs47aijrnyrfwny6nea4i6srua -r auto -b carpark --endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com')
+  .option('-e, --endpoint', 'Bucket endpoint. e.g https://<ACCOUNT_ID>.r2.cloudflarestorage.com')
+  .option('-r, --region', 'Bucket region', 'us-east-1') // "When using the S3 API, the region for an R2 bucket is auto. For compatibility with tools that do not allow you to specify a region, an empty value and us-east-1 will alias to the auto region."
+  .option('-b, --bucket', 'Bucket name.')
+  .action(async (/** @type {string|undefined} */ cidstr, /** @type {Record<string, string|undefined>} */ options) => {
+    const accessKeyId = notNully(process.env, 'DEST_ACCESS_KEY_ID', 'missing environment variable')
+    const secretAccessKey = notNully(process.env, 'DEST_SECRET_ACCESS_KEY', 'missing environment variable')
+    const endpoint = options.endpoint ?? notNully(process.env, 'DEST_ENDPOINT', 'missing required option')
+    const region = notNully(options, 'region', 'missing required option')
+    const bucket = notNully(options, 'bucket', 'missing required option')
+    const client = new S3Client({ region, endpoint, credentials: { accessKeyId, secretAccessKey },  })
+
+    if (cidstr) {
+      const res = await head(cidstr, bucket, region, client)
+      return console.log(dagJSON.stringify(res))
+    }
+
+    const source = /** @type {ReadableStream<Uint8Array>} */ (Readable.toWeb(process.stdin))
+    await source
+      .pipeThrough(/** @type {Parse<{ region?: string, bucket?: string, key: string, cid: { '/': string }, root?: { '/': string } }>} */ (new Parse()))
+      .pipeThrough(new Parallel(concurrency, item => head(item.cid['/'], bucket, region, client)))
+      .pipeThrough(new TransformStream({
+        transform: (item, controller) => controller.enqueue(`${dagJSON.stringify(item)}\n`)
+      }))
+      .pipeTo(Writable.toWeb(process.stdout))
+  })
+
+/**
+ * Check head response for car cid at the given bucket endpoint
+ * Flag error if status not 200 or content-length: 0
+ * 
+ * public url access is not enabled on carpark, so we must provide auth
+ * 
+ * @param {string} cidstr
+ * @param {string} bucket
+ * @param {string} region
+ * @param {S3Client} client
+ */
+async function head (cidstr, bucket, region, client) {
+  const cid = Link.parse(cidstr)
+  const key = `${cid}/${cid}.car`
+  try {
+    const cmd = new HeadObjectCommand({ Bucket: bucket, Key: key })
+    const res = await client.send(cmd)
+    const length = res.ContentLength
+    const status = res.$metadata.httpStatusCode
+    if (status === 200) {
+      if (length > 0) {
+        return { cid, region, bucket, key, status, length }
+      }
+      console.warn(`error: ${region}/${bucket}/${key} - content-length: 0`)
+      return { cid, region, bucket, key, status, length, error: `content-length: 0` }
+    }
+    console.warn(`error: ${region}/${bucket}/${key} - http status: ${status}`)
+    return { cid, region, bucket, key, status, error: `http status: ${status}` }
+  } catch (err) {
+    console.warn(`error: ${region}/${bucket}/${key}`, err.message ?? err)
+    return { cid, region, bucket, key, error: err.message ?? err }
+  }
 }
 
 cli.parse(process.argv)
