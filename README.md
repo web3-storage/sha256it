@@ -93,5 +93,5 @@ sha256it head --region auto --bucket carpark --endpoint https://<ACCOUNT_ID>.r2.
 **output**
 
 ```json
-{"bucket":"carpark","cid":{"/":"[car cid]"},"key":"[car cid]/[car cid].car","length":10862134,"region"="auto","status":200}
+{"bucket":"carpark","cid":{"/":"[car cid]"},"key":"[car cid]/[car cid].car","length":10862134,"region":"auto","status":200}
 ```
