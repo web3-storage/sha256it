@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import { Readable, Writable } from 'node:stream'
+import { fetch, Agent } from 'undici'
 import sade from 'sade'
 import { S3Client, ListObjectsV2Command, HeadObjectCommand } from '@aws-sdk/client-s3'
 import dotenv from 'dotenv'
-import { Parse } from 'ndjson-web'
+import { Parse, Stringify } from 'ndjson-web'
 import * as dagJSON from '@ipld/dag-json'
 import { Parallel } from 'parallel-transform-web'
 import retry from 'p-retry'
@@ -12,7 +13,8 @@ import * as Link from 'multiformats/link'
 
 const pkg = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url)).toString())
 const cli = sade('sha256it')
-const concurrency = 25
+const concurrency = 50
+const dispatcher = new Agent({ headersTimeout: 900e3 })
 
 dotenv.config({ path: './.env.local' })
 
@@ -85,9 +87,7 @@ cli
           return { region, bucket, key, error: err.message }
         }
       }))
-      .pipeThrough(new TransformStream({
-        transform: (item, controller) => controller.enqueue(`${dagJSON.stringify(item)}\n`)
-      }))
+      .pipeThrough(new Stringify(dagJSON.stringify))
       .pipeTo(Writable.toWeb(process.stdout))
   })
 
@@ -103,7 +103,7 @@ const hash = async (endpoint, region, bucket, key) => {
   url.searchParams.set('region', region)
   url.searchParams.set('bucket', bucket)
   url.searchParams.set('key', key)
-  const res = await fetch(url)
+  const res = await fetch(url, { dispatcher })
   const text = await res.text()
   if (!res.ok) throw new Error(`hash failed: ${text}`)
   return dagJSON.parse(text)
@@ -134,8 +134,9 @@ cli.command('copy [key] [cid]')
 
     const source = /** @type {ReadableStream<Uint8Array>} */ (Readable.toWeb(process.stdin))
     await source
-      .pipeThrough(/** @type {Parse<{ region?: string, bucket?: string, key: string, cid: { '/': string }, root?: { '/': string } }>} */ (new Parse()))
+      .pipeThrough(/** @type {Parse<{ region?: string, bucket?: string, key: string, cid: { '/': string }, root?: { '/': string } }|{ error: string }>} */ (new Parse()))
       .pipeThrough(new Parallel(concurrency, async item => {
+        if ('error' in item) return { ...item, error: 'missing shard CID' }
         const region = item.region ?? notNully(options, 'region', 'missing required option')
         const bucket = item.bucket ?? notNully(options, 'bucket', 'missing required option')
         const { key } = item
@@ -155,9 +156,7 @@ cli.command('copy [key] [cid]')
           return { region, bucket, key, cid, root, error: err.message }
         }
       }))
-      .pipeThrough(new TransformStream({
-        transform: (item, controller) => controller.enqueue(`${dagJSON.stringify(item)}\n`)
-      }))
+      .pipeThrough(new Stringify(dagJSON.stringify))
       .pipeTo(Writable.toWeb(process.stdout))
   })
 
@@ -176,7 +175,7 @@ const copy = async (endpoint, region, bucket, key, shard, root) => {
   url.searchParams.set('key', key)
   url.searchParams.set('shard', shard.toString())
   url.searchParams.set('root', root.toString())
-  const res = await fetch(url)
+  const res = await fetch(url, { dispatcher })
   const text = await res.text()
   if (!res.ok) throw new Error(`copy failed: ${text}`)
   return dagJSON.parse(text)
@@ -210,23 +209,25 @@ cli.command('head [carCid]')
   .action(async (/** @type {string|undefined} */ cidstr, /** @type {Record<string, string|undefined>} */ options) => {
     const accessKeyId = notNully(process.env, 'DEST_ACCESS_KEY_ID', 'missing environment variable')
     const secretAccessKey = notNully(process.env, 'DEST_SECRET_ACCESS_KEY', 'missing environment variable')
-    const endpoint = options.endpoint ?? notNully(process.env, 'DEST_ENDPOINT', 'missing required option')
-    const region = notNully(options, 'region', 'missing required option')
+    const endpoint = options.endpoint ?? notNully(process.env, 'DEST_ENDPOINT', 'missing required environment variable')
+    const region = options.region ?? notNully(process.env, 'DEST_REGION', 'missing required environment variable')
     const bucket = notNully(options, 'bucket', 'missing required option')
     const client = new S3Client({ region, endpoint, credentials: { accessKeyId, secretAccessKey },  })
 
     if (cidstr) {
-      const res = await head(cidstr, bucket, region, client)
+      const cid = Link.parse(cidstr)
+      const res = await head(cid, bucket, region, client)
       return console.log(dagJSON.stringify(res))
     }
 
     const source = /** @type {ReadableStream<Uint8Array>} */ (Readable.toWeb(process.stdin))
     await source
       .pipeThrough(/** @type {Parse<{ region?: string, bucket?: string, key: string, cid: { '/': string }, root?: { '/': string } }>} */ (new Parse()))
-      .pipeThrough(new Parallel(concurrency, item => head(item.cid['/'], bucket, region, client)))
-      .pipeThrough(new TransformStream({
-        transform: (item, controller) => controller.enqueue(`${dagJSON.stringify(item)}\n`)
+      .pipeThrough(new Parallel(concurrency, item => {
+        const cid = Link.parse(item.cid['/'])
+        return head(cid, bucket, region, client)
       }))
+      .pipeThrough(new Stringify(dagJSON.stringify))
       .pipeTo(Writable.toWeb(process.stdout))
   })
 
@@ -236,20 +237,19 @@ cli.command('head [carCid]')
  * 
  * public url access is not enabled on carpark, so we must provide auth
  * 
- * @param {string} cidstr
+ * @param {import('multiformats').UnknownLink} cid
  * @param {string} bucket
  * @param {string} region
  * @param {S3Client} client
  */
-async function head (cidstr, bucket, region, client) {
-  const cid = Link.parse(cidstr)
+async function head (cid, bucket, region, client) {
   const key = `${cid}/${cid}.car`
   try {
     const cmd = new HeadObjectCommand({ Bucket: bucket, Key: key })
     const res = await client.send(cmd)
-    const length = res.ContentLength
     const status = res.$metadata.httpStatusCode
     if (status === 200) {
+      const length = res.ContentLength ?? 0
       if (length > 0) {
         return { cid, region, bucket, key, status, length }
       }
@@ -263,5 +263,21 @@ async function head (cidstr, bucket, region, client) {
     return { cid, region, bucket, key, error: err.message ?? err }
   }
 }
+
+cli
+  .command('errors')
+  .describe('filter items that have an `error` property from the ndjson list')
+  .action(async () => {
+    const source = /** @type {ReadableStream<Uint8Array>} */ (Readable.toWeb(process.stdin))
+    await source
+      .pipeThrough(/** @type {Parse<{}|{ error: string }>} */ (new Parse()))
+      .pipeThrough(new TransformStream({
+        transform: (item, controller) => {
+          if (!('error' in item)) return
+          controller.enqueue(item)
+        }
+      }))
+      .pipeTo(Writable.toWeb(process.stdout))
+  })
 
 cli.parse(process.argv)
