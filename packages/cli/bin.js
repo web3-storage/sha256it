@@ -64,7 +64,7 @@ cli
   .option('-r, --region', 'Bucket region.')
   .option('-b, --bucket', 'Bucket name.')
   .action(async (/** @type {string|undefined} */ key, /** @type {Record<string, string|undefined>} */ options) => {
-    const endpoint = new URL(options.endpoint ?? notNully(process.env, 'SERVICE_ENDPOINT', 'missing required option'))
+    const endpoint = new URL(options.endpoint ?? notNully(process.env, 'HASH_SERVICE_ENDPOINT', 'missing required option'))
     if (key) {
       const region = notNully(options, 'region', 'missing required option')
       const bucket = notNully(options, 'bucket', 'missing required option')
@@ -280,5 +280,66 @@ cli
       .pipeThrough(new Stringify(dagJSON.stringify))
       .pipeTo(Writable.toWeb(process.stdout))
   })
+
+cli.command('index [key] [cid]')
+  .option('-e, --endpoint', 'Service endpoint.')
+  .option('-r, --region', 'Bucket region.')
+  .option('-b, --bucket', 'Bucket name.')
+  .action(async (/** @type {string|undefined} */ key, /** @type {string|undefined} */ cidstr, /** @type {Record<string, string|undefined>} */ options) => {
+    const endpoint = new URL(options.endpoint ?? notNully(process.env, 'INDEX_SERVICE_ENDPOINT', 'missing required option'))
+    if (key && cidstr) {
+      const region = notNully(options, 'region', 'missing required option')
+      const bucket = notNully(options, 'bucket', 'missing required option')
+      /** @type {import('multiformats').Link} */
+      const cid = Link.parse(cidstr)
+      try {
+        await index(endpoint, region, bucket, key, cid)
+        return console.log(dagJSON.stringify({ region, bucket, key, cid }))
+      } catch (err) {
+        console.warn(`failed index of ${region}/${bucket}/${key}`, err)
+        return console.log(dagJSON.stringify({ region, bucket, key, cid, error: err.message }))
+      }
+    }
+
+    const source = /** @type {ReadableStream<Uint8Array>} */ (Readable.toWeb(process.stdin))
+    await source
+      .pipeThrough(/** @type {Parse<{ region?: string, bucket?: string, key: string, cid: { '/': string }, root?: { '/': string } }|{ error: string }>} */ (new Parse()))
+      .pipeThrough(new Parallel(concurrency, async item => {
+        if ('error' in item) return { ...item, error: 'missing shard CID' }
+        const region = item.region ?? notNully(options, 'region', 'missing required option')
+        const bucket = item.bucket ?? notNully(options, 'bucket', 'missing required option')
+        const { key } = item
+        /** @type {import('multiformats').Link} */
+        const cid = Link.parse(item.cid['/'])
+        try {
+          await retry(() => index(endpoint, region, bucket, key, cid))
+          return { region, bucket, key, cid }
+        } catch (err) {
+          console.warn(`failed index of ${region}/${bucket}/${key}`, err)
+          return { region, bucket, key, cid, error: err.message }
+        }
+      }))
+      .pipeThrough(new Stringify(dagJSON.stringify))
+      .pipeTo(Writable.toWeb(process.stdout))
+  })
+
+/**
+ * @param {URL} endpoint
+ * @param {string} region
+ * @param {string} bucket
+ * @param {string} key
+ * @param {import('multiformats').Link} shard
+ */
+const index = async (endpoint, region, bucket, key, shard) => {
+  const url = new URL(endpoint)
+  url.searchParams.set('region', region)
+  url.searchParams.set('bucket', bucket)
+  url.searchParams.set('key', key)
+  url.searchParams.set('shard', shard.toString())
+  const res = await fetch(url, { dispatcher })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`index failed: ${text}`)
+  return dagJSON.parse(text)
+}
 
 cli.parse(process.argv)
