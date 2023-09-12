@@ -7,6 +7,7 @@ export function API ({ stack }: StackContext) {
   const CARPARK_BUCKET = mustGetEnv(process.env, 'CARPARK_BUCKET')
   const SATNAV_BUCKET = mustGetEnv(process.env, 'SATNAV_BUCKET')
   const DUDEWHERE_BUCKET = mustGetEnv(process.env, 'DUDEWHERE_BUCKET')
+  const BLOCK_INDEX_REGION = mustGetEnv(process.env, 'BLOCK_INDEX_REGION')
   const BLOCK_INDEX_TABLE = mustGetEnv(process.env, 'BLOCK_INDEX_TABLE')
 
   stack.setDefaultFunctionProps({
@@ -45,6 +46,7 @@ export function API ({ stack }: StackContext) {
     handler: 'packages/functions/src/index.handler',
     url: { cors: true, authorizer: 'none' },
     environment: {
+      BLOCK_INDEX_REGION,
       BLOCK_INDEX_TABLE
     }
   })

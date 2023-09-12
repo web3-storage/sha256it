@@ -48,7 +48,10 @@ export const _handler = async (request: Request, env: Record<string, string|unde
       key: srcKey
     }
 
-    const dest = { tableName: mustGetEnv(env, 'BLOCK_INDEX_TABLE') }
+    const dest = {
+      region: mustGetEnv(env, 'BLOCK_INDEX_REGION'),
+      tableName: mustGetEnv(env, 'BLOCK_INDEX_TABLE')
+    }
 
     return await index(src, dest)
   } catch (err: any) {
