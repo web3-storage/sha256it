@@ -277,6 +277,7 @@ cli
           controller.enqueue(item)
         }
       }))
+      .pipeThrough(new Stringify(dagJSON.stringify))
       .pipeTo(Writable.toWeb(process.stdout))
   })
 
