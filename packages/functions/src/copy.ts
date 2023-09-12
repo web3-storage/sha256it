@@ -12,34 +12,11 @@ import { Uint8ArrayList } from 'uint8arraylist'
 import { CARReaderStream } from 'carstream'
 import { MultihashIndexSortedWriter } from 'cardex/multihash-index-sorted'
 import { mustGetEnv, errorResponse } from './lib/util'
+import { ShardLink, ObjectID, ContentAddressedObjectID, ShardObjectID } from './lib/api.js'
+import { CAR_CODEC } from './lib/constants.js'
 
-const CAR_CODEC = 0x0202
 const MAX_PUT_SIZE = 1024 * 1024 * 1024 * 5
 const TARGET_PART_SIZE = 1024 * 1024 * 100
-
-type ShardLink = Link.Link<Uint8Array, typeof CAR_CODEC>
-
-interface ObjectID {
-  region: string
-  bucket: string
-  key: string
-  endpoint?: string
-  credentials?: {
-    accessKeyId: string,
-    secretAccessKey: string
-  }
-}
-
-interface ContentAddressedObjectID<
-  Data extends unknown = unknown,
-  Format extends number = number,
-  Alg extends number = number,
-  V extends Link.Version = 1
-> extends ObjectID {
-  cid: Link.Link<Data, Format, Alg, V>
-}
-
-interface ShardObjectID extends ContentAddressedObjectID<Uint8Array, typeof CAR_CODEC> {}
 
 interface ShardSource extends ContentAddressedObjectID<Uint8Array, typeof CAR_CODEC> {
   size: number

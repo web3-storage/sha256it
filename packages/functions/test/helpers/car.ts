@@ -3,13 +3,15 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Readable, Writable } from 'node:stream'
-import { CARWriterStream } from 'carstream'
+import { CARReaderStream, CARWriterStream,  } from 'carstream'
+import { Block as CARBlock, Position } from 'carstream/api'
 import * as Link from 'multiformats/link'
 import { sha256 } from 'multiformats/hashes/sha2'
 import * as raw from 'multiformats/codecs/raw'
 import * as Block from 'multiformats/block'
 import * as Digest from 'multiformats/hashes/digest'
 import { customAlphabet } from 'nanoid'
+import { MultihashIndexSortedWriter } from 'cardex/multihash-index-sorted'
 
 const id = customAlphabet('1234567890abcdefghijklmnopqrstuvwxyz', 10)
 
@@ -24,6 +26,32 @@ export const generateTestCAR = async (targetSize: number) => {
   console.log(`  size: ${size} bytes`)
   console.log(`  path: ${carPath}`)
   return { cid, root: car.root, size, path: carPath }
+}
+
+export const writeCARIndex = async (src: string, dest: string) => {
+  const { readable, writable } = new TransformStream()
+  const writer = MultihashIndexSortedWriter.createWriter({ writer: writable.getWriter() })
+  const stream = Readable.toWeb(fs.createReadStream(src)) as ReadableStream<Uint8Array>
+  const items: Array<{ cid: Link.UnknownLink } & Position> = []
+  await Promise.all([
+    stream
+      .pipeThrough(new CARReaderStream())
+      .pipeTo(new WritableStream({
+        async write (block) {
+          items.push({ cid: block.cid, offset: block.offset, length: block.length })
+          await writer.add(block.cid, block.offset)
+        },
+        close () {
+          return writer.close()
+        }
+      })),
+    readable.pipeTo(Writable.toWeb(fs.createWriteStream(dest)))
+  ])
+  const stats = await fs.promises.stat(dest)
+  console.log(`wrote CAR index for: ${src}`)
+  console.log(`  size: ${stats.size} bytes`)
+  console.log(`  path: ${dest}`)
+  return { path: dest, size: stats.size, items }
 }
 
 const randomBlock = async () => {

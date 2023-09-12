@@ -7,6 +7,8 @@ export function API ({ stack }: StackContext) {
   const CARPARK_BUCKET = mustGetEnv(process.env, 'CARPARK_BUCKET')
   const SATNAV_BUCKET = mustGetEnv(process.env, 'SATNAV_BUCKET')
   const DUDEWHERE_BUCKET = mustGetEnv(process.env, 'DUDEWHERE_BUCKET')
+  const BLOCK_INDEX_REGION = mustGetEnv(process.env, 'BLOCK_INDEX_REGION')
+  const BLOCK_INDEX_TABLE = mustGetEnv(process.env, 'BLOCK_INDEX_TABLE')
 
   stack.setDefaultFunctionProps({
     memorySize: '1 GB',
@@ -40,8 +42,20 @@ export function API ({ stack }: StackContext) {
 
   copyFunction.attachPermissions(['s3:GetObject'])
 
+  const indexFunction = new Function(stack, 'index', {
+    handler: 'packages/functions/src/index.handler',
+    url: { cors: true, authorizer: 'none' },
+    environment: {
+      BLOCK_INDEX_REGION,
+      BLOCK_INDEX_TABLE
+    }
+  })
+
+  indexFunction.attachPermissions(['s3:GetObject', 'dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem'])
+
   stack.addOutputs({
     hashFunctionURL: hashFunction.url,
-    copyFunctionURL: copyFunction.url
+    copyFunctionURL: copyFunction.url,
+    indexFunctionURL: indexFunction.url
   })
 }
